@@ -15,7 +15,7 @@
 
 ## 使用方法
 1. 下載本專案的 `gui.py`。
-2. **自行下載核心工具**：前往 [colmsg 原作者 GitHub]https://github.com/proshunsuke/colmsg) 下載 `colmsg.exe`。
+2. **自行下載核心工具**：前往 [colmsg 原作者 GitHub](https://github.com/proshunsuke/colmsg) 下載 `colmsg.exe`。
 3. 將 `gui.py` 與 `colmsg.exe` 放在同一個資料夾。
 4. 安裝 Python (若未安裝) 並執行：
    ```bash
