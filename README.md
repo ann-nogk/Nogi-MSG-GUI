@@ -1,6 +1,6 @@
 # 🟣 乃木坂46 MSG 備份工具 GUI (非官方)
 
-一個基於 [colmsg](https://github.com/proshunsuke/colmsg) 的圖形化介面工具，專為乃木坂46 Message App 設計。提供備份和**離線網頁瀏覽**。
+一個基於 [colmsg](https://github.com/proshunsuke/colmsg) 的圖形化介面工具，專為乃木坂46 Message App 設計。提供備份和**離線網頁瀏覽**。<img width="320" height="450" alt="image" src="https://github.com/user-attachments/assets/daeff3ea-47c7-4cdd-b701-0f1ed4380045" />
 ## ✨ 主要功能 
 ### 📥 備份與下載管理
 *   **直覺式 GUI 介面**：免去輸入繁雜指令，直接透過視窗操作 `colmsg`。
