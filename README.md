@@ -42,7 +42,7 @@ NogiBackup/
 └── nogizaka/        <-- (備份後會自動產生此資料夾)
 ```
 ### 3. 操作步驟
-1.  開啟 `gui.exe`
+1.  開啟 `NogkSaver.exe`
 2.  **Refresh Token：** 填入您抓包取得的 Refresh Token（需自行取得）
 3.  **儲存位置：** 選擇備份檔案存放的路徑。
 4.  點擊 **「開始備份」**
@@ -65,3 +65,4 @@ NogiBackup/
 
 回報 Bug：請使用 [Issues]( https://github.com/ann-nogk/Nogi-MSG-GUI/issues) 頁面。<br>
 閒聊與討論：歡迎至 [Discussions]( https://github.com/ann-nogk/Nogi-MSG-GUI/discussions) 區留言。
+
