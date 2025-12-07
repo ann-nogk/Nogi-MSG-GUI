@@ -1,9 +1,8 @@
 # 🟣 乃木坂46 MSG 備份工具 GUI (非官方)
 
-一個基於 [colmsg](https://github.com/proshunsuke/colmsg) 的圖形化介面工具，專為乃木坂46 Message App 設計。提供備份和**離線網頁瀏覽**。<br>
+一個基於 [colmsg](https://github.com/proshunsuke/colmsg) 的圖形化介面工具，專為乃木坂46 Message App 設計。提供備份和**離線網頁瀏覽**。<br><br>
 <img width="320" height="450" alt="主畫面" src="https://github.com/user-attachments/assets/091def9b-ad13-484b-b8cb-dcd41b313343" />
 <img width="320" height="450" alt="index" src="https://github.com/user-attachments/assets/ba633018-9b99-4367-bf06-866214c40352" />
-##
 <table>
   <tr>
   </tr>
@@ -83,6 +82,7 @@ NogiBackup/
 
 回報 Bug：請使用 [Issues](../../issues) 頁面。<br>
 閒聊與討論：歡迎至 [Discussions](../../discussions) 區留言。
+
 
 
 
