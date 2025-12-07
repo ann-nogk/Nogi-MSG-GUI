@@ -7,10 +7,11 @@ import re
 import json
 import shutil
 import webbrowser
+import time # 用於快取迴避
 
-# --- Avatar 選擇視窗 ---
+# --- Avatar 選擇視窗 (v30.0: 支援回調函數 Callback) ---
 class AvatarSelectionWindow(tk.Toplevel):
-    def __init__(self, parent, member_list, target_dir):
+    def __init__(self, parent, member_list, target_dir, callback):
         super().__init__(parent)
         self.title("設定成員頭像")
         self.geometry("460x550") 
@@ -18,6 +19,7 @@ class AvatarSelectionWindow(tk.Toplevel):
         self.target_dir = target_dir
         self.avatar_map = {} 
         self.parent = parent
+        self.callback = callback # 執行完成後要呼叫的函式
         self.attributes('-topmost', True)
 
         ttk.Label(self, text="請為成員選擇頭像圖片:", padding=15).pack(fill='x')
@@ -68,7 +70,7 @@ class AvatarSelectionWindow(tk.Toplevel):
         self.progress = ttk.Progressbar(bottom_frame, orient="horizontal", mode="determinate")
         self.progress.pack(fill='x', pady=(0, 15))
         
-        self.confirm_btn = ttk.Button(bottom_frame, text="確認並產生網頁", command=self.on_confirm)
+        self.confirm_btn = ttk.Button(bottom_frame, text="確認並執行", command=self.on_confirm)
         self.confirm_btn.pack(ipadx=20, ipady=5)
 
         self.focus_force()
@@ -117,6 +119,8 @@ class AvatarSelectionWindow(tk.Toplevel):
             os.makedirs(avatar_dir)
 
         count = 0
+        timestamp = int(time.time()) # 加入時間戳記避免快取
+        
         for member, var in self.path_vars.items():
             src_path = var.get().strip()
             if src_path and os.path.exists(src_path):
@@ -125,7 +129,8 @@ class AvatarSelectionWindow(tk.Toplevel):
                 dest_path = os.path.join(avatar_dir, new_filename)
                 try:
                     shutil.copy2(src_path, dest_path)
-                    self.avatar_map[member] = f"avatars/{new_filename}"
+                    # 這裡加入 ?t=... 讓瀏覽器認為是新圖片
+                    self.avatar_map[member] = f"avatars/{new_filename}?t={timestamp}"
                 except Exception as e:
                     print(f"複製頭像失敗 {member}: {e}")
             count += 1
@@ -137,15 +142,16 @@ class AvatarSelectionWindow(tk.Toplevel):
 
     def finish(self):
         self.destroy()
+        # 執行回調函數
+        if self.callback:
+            self.callback(self.avatar_map)
 
-# --- HTML 生成器邏輯 ---
+# --- HTML 生成器邏輯 (v30.0: 新增 update_html_avatars) ---
 class ChatGenerator:
     def generate_single_index(self, group_folder_path, nickname="", avatar_map=None):
-        if avatar_map is None:
-            avatar_map = {}
-
-        if not os.path.exists(group_folder_path):
-            return False, "找不到資料夾"
+        # ... (保持原有的生成邏輯不變) ...
+        if avatar_map is None: avatar_map = {}
+        if not os.path.exists(group_folder_path): return False, "找不到資料夾"
 
         all_data = {}
         members = []
@@ -156,8 +162,7 @@ class ChatGenerator:
                 members.append(entry)
         members.sort()
 
-        if not members:
-            return False, "找不到成員資料夾"
+        if not members: return False, "找不到成員資料夾"
 
         valid_exts = {'.txt', '.jpg', '.jpeg', '.png', '.mp4', '.m4a', '.mp3', '.wav'}
         time_pattern = re.compile(r'(\d{14})')
@@ -165,353 +170,64 @@ class ChatGenerator:
         for member in members:
             member_path = os.path.join(group_folder_path, member)
             member_msgs = []
-            
             for f in os.listdir(member_path):
                 ext = os.path.splitext(f)[1].lower()
                 if ext in valid_exts:
                     match = time_pattern.search(f)
                     timestamp_str = match.group(1) if match else "00000000000000"
-                    
-                    msg_obj = {
-                        'f': f, 
-                        't': ext, 
-                        'ts': timestamp_str, 
-                        'd': self._format_date(timestamp_str), 
-                        'hm': self._format_time(timestamp_str), 
-                        'c': '' 
-                    }
+                    msg_obj = {'f': f, 't': ext, 'ts': timestamp_str, 'd': self._format_date(timestamp_str), 'hm': self._format_time(timestamp_str), 'c': ''}
                     if ext == '.txt':
                         try:
                             with open(os.path.join(member_path, f), 'r', encoding='utf-8') as tf:
                                 raw_text = tf.read()
-                                if nickname:
-                                    raw_text = raw_text.replace('%%%', nickname)
+                                if nickname: raw_text = raw_text.replace('%%%', nickname)
                                 msg_obj['c'] = raw_text
                         except: msg_obj['c'] = "(Error)"
-                    
                     member_msgs.append(msg_obj)
-            
             member_msgs.sort(key=lambda x: x['ts'])
             all_data[member] = member_msgs
 
         json_data = json.dumps(all_data, ensure_ascii=False)
         json_avatars = json.dumps(avatar_map, ensure_ascii=False)
 
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="zh-TW">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Nogi MSG Viewer</title>
-            <style>
-                body {{ background-color: #f2f3f7; font-family: "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden; }}
-                .sidebar {{ width: 220px; background-color: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; }}
-                .sidebar-header {{ padding: 15px; background-color: #6a0d6e; color: white; font-weight: bold; text-align: center; }}
-                .sidebar-sort-info {{ background-color: #f8f0fc; padding: 5px 10px; font-size: 12px; color: #666; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; }}
-                .reset-btn {{ font-size: 10px; background: #ddd; border: none; padding: 2px 6px; cursor: pointer; border-radius: 4px; color: #333; display: none; }}
-                .reset-btn:hover {{ background: #ccc; }}
-                .member-list {{ overflow-y: auto; flex-grow: 1; }}
-                .member-item {{ padding: 12px 20px; cursor: grab; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center; gap: 10px; transition: background 0.1s; user-select: none; }}
-                .member-item:hover {{ background-color: #f9f9f9; }}
-                .member-item.active {{ background-color: #f3e5f5; color: #7e1083; font-weight: bold; border-left: 4px solid #7e1083; }}
-                .member-item.dragging {{ opacity: 0.5; background-color: #eee; }}
-                .member-avatar-icon {{ width: 32px; height: 32px; background: #ddd; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 12px; color: #fff; overflow: hidden; flex-shrink: 0; }}
-                .member-avatar-icon img {{ width: 100%; height: 100%; object-fit: cover; transition: transform 0.2s; }}
-                .member-avatar-icon.clickable {{ cursor: zoom-in; }} 
-                .member-avatar-icon.clickable:hover img {{ transform: scale(1.1); }}
-                .main-area {{ flex-grow: 1; display: flex; flex-direction: column; height: 100%; position: relative; }}
-                .header {{ background-color: #7e1083; color: white; height: 50px; display: flex; align-items: center; justify-content: center; padding: 0 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); flex-shrink: 0; position: relative; }}
-                .header-center-group {{ display: flex; align-items: center; gap: 10px; }}
-                .header-title {{ font-size: 18px; font-weight: bold; margin-right: 5px; }}
-                select {{ padding: 3px 8px; border-radius: 12px; border: none; outline: none; background: rgba(255,255,255,0.9); color: #7e1083; font-weight: bold; cursor: pointer; font-size: 13px; }}
-                #scaleSelect {{ background: rgba(255,255,255,0.7); color: #333; }}
-                .chat-container {{ flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; opacity: 0; transition: opacity 0.15s ease-out; }}
-                .empty-state {{ text-align: center; color: #999; margin-top: 100px; }}
-                .timestamp-separator {{ text-align: center; color: #888; font-size: 12px; margin: 15px 0; background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 12px; align-self: center; }}
-                .msg-row {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; }}
-                .avatar {{ width: 40px; height: 40px; background-color: #ccc; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; flex-shrink: 0; overflow: hidden; }}
-                .avatar img {{ width: 100%; height: 100%; object-fit: cover; transition: opacity 0.2s; }}
-                .avatar.clickable {{ cursor: zoom-in; }}
-                .avatar.clickable:hover {{ opacity: 0.8; }}
-                .bubble-wrapper {{ display: flex; flex-direction: column; max-width: 80%; }}
-                .bubble a {{ color: #0066cc; text-decoration: underline; word-break: break-all; }}
-                .bubble {{ background-color: white; padding: 10px 14px; border-radius: 18px; border-top-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); word-wrap: break-word; line-height: 1.5; color: #333; font-size: 15px; white-space: pre-wrap; }}
-                .media-bubble {{ background: transparent; box-shadow: none; padding: 0; border-radius: 12px; overflow: hidden; display: inline-block; }}
-                :root {{ --img-scale: 25%; --video-scale: 65%; }}
-                .chat-img {{ width: var(--img-scale); border-radius: 12px; display: block; cursor: zoom-in; border: 1px solid #eee; transition: width 0.3s; }}
-                .chat-video {{ width: 100%; border-radius: 12px; max-height: 400px; display: block; margin: 0; }}
-                .video-container {{ display: flex; align-items: center; gap: 8px; }}
-                .video-wrapper {{ width: var(--video-scale); line-height: 0; }}
-                .video-expand-btn {{ width: 30px; height: 30px; border-radius: 50%; border: none; background-color: #ddd; color: #555; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }}
-                .video-expand-btn:hover {{ background-color: #bbb; color: #000; }}
-                .chat-audio {{ width: 240px; }}
-                .time-label {{ font-size: 11px; color: #999; margin-left: 4px; margin-top: 5px; min-width: 35px; }}
-                .nav-buttons {{ position: fixed; bottom: 30px; right: 30px; display: flex; flex-direction: column; gap: 10px; z-index: 500; }}
-                .nav-btn {{ width: 40px; height: 40px; border-radius: 50%; background: rgba(126, 16, 131, 0.8); color: white; border: none; font-size: 20px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; opacity: 0.7; transition: opacity 0.2s, transform 0.2s; }}
-                .nav-btn:hover {{ opacity: 1; transform: scale(1.1); }}
-                #lightbox {{ display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.9); align-items: center; justify-content: center; }}
-                #lightbox-img {{ max-width: 90%; max-height: 90%; border-radius: 5px; box-shadow: 0 0 20px rgba(0,0,0,0.5); object-fit: contain; cursor: default; }}
-                #lightbox-video {{ max-width: 90%; max-height: 90%; outline: none; }}
-                @media (max-width: 768px) {{ .sidebar {{ display: none; }} .header-center-group {{ flex-wrap: wrap; justify-content: center; }} }}
-            </style>
-        </head>
-        <body>
-            <div id="lightbox" onclick="closeLightbox(event)">
-                <img id="lightbox-img" src="" alt="Full size" style="display:none;" onclick="event.stopPropagation()">
-                <video id="lightbox-video" controls style="display:none;" onclick="event.stopPropagation()"></video>
-            </div>
-            <div class="nav-buttons">
-                <button class="nav-btn" title="回頂端" onclick="scrollToTop()">↑</button>
-                <button class="nav-btn" title="去底部" onclick="scrollToBottom()">↓</button>
-            </div>
-            <div class="sidebar">
-                <div class="sidebar-header">乃木坂46 MSG</div>
-                <div class="sidebar-sort-info">
-                    <span id="sortStatus">排序：50音 (預設)</span>
-                    <button id="resetSortBtn" class="reset-btn" onclick="resetSort()">重置</button>
-                </div>
-                <div class="member-list" id="memberList"></div>
-            </div>
-            <div class="main-area">
-                <div class="header">
-                    <div class="header-center-group">
-                        <div class="header-title" id="headerTitle">請選擇成員</div>
-                        <select id="yearSelect" disabled><option>年</option></select>
-                        <select id="monthSelect" disabled><option>月</option></select>
-                        <select id="scaleSelect">
-                            <option value="25%" selected>圖: 小</option>
-                            <option value="50%">圖: 中</option>
-                            <option value="75%">圖: 大</option>
-                            <option value="100%">圖: 原</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="chat-container" id="chatBox">
-                    <div class="empty-state">請從左側選擇要瀏覽的成員</div>
-                </div>
-            </div>
-            <script>
-                const allData = {json_data};
-                const avatarMap = {json_avatars};
-                let currentMember = null;
-                let currentYears = {{}}; 
-                let scrollTimeout = null;
-                const memberListEl = document.getElementById('memberList');
-                const chatBox = document.getElementById('chatBox');
-                const headerTitle = document.getElementById('headerTitle');
-                const yearSelect = document.getElementById('yearSelect');
-                const monthSelect = document.getElementById('monthSelect');
-                const scaleSelect = document.getElementById('scaleSelect');
-                const sortStatus = document.getElementById('sortStatus');
-                const resetSortBtn = document.getElementById('resetSortBtn');
-
-                function openLightbox(src, type='img') {{
-                    const lb = document.getElementById('lightbox');
-                    const lbImg = document.getElementById('lightbox-img');
-                    const lbVid = document.getElementById('lightbox-video');
-                    lb.style.display = "flex";
-                    if (type === 'video') {{
-                        lbImg.style.display = "none";
-                        lbVid.style.display = "block";
-                        lbVid.src = src;
-                        lbVid.play();
-                    }} else {{
-                        lbVid.style.display = "none";
-                        lbVid.pause();
-                        lbImg.style.display = "block";
-                        lbImg.src = src;
-                    }}
-                }}
-                function closeLightbox(e) {{
-                    const lb = document.getElementById('lightbox');
-                    const lbVid = document.getElementById('lightbox-video');
-                    lbVid.pause();
-                    lb.style.display = "none";
-                }}
-                function scrollToTop() {{ chatBox.scrollTo({{ top: 0, behavior: 'smooth' }}); }}
-                function scrollToBottom() {{ chatBox.scrollTo({{ top: chatBox.scrollHeight, behavior: 'smooth' }}); }}
-
-                function init() {{
-                    let members = Object.keys(allData).sort();
-                    const savedOrder = localStorage.getItem('nogi_member_order');
-                    if (savedOrder) {{
-                        try {{
-                            const customOrder = JSON.parse(savedOrder);
-                            const validCustom = customOrder.filter(m => members.includes(m));
-                            const missing = members.filter(m => !validCustom.includes(m));
-                            members = [...validCustom, ...missing];
-                            updateSortStatus(true);
-                        }} catch(e) {{}}
-                    }}
-                    renderSidebar(members);
-                    scaleSelect.onchange = function() {{ document.documentElement.style.setProperty('--img-scale', this.value); }};
-                    document.documentElement.style.setProperty('--img-scale', '25%');
-                    const lastMember = localStorage.getItem('nogi_last_member');
-                    if (lastMember && allData[lastMember]) {{ loadMember(lastMember); }}
-                    chatBox.addEventListener('scroll', function() {{
-                        if (!currentMember || chatBox.style.opacity === '0') return;
-                        clearTimeout(scrollTimeout);
-                        scrollTimeout = setTimeout(() => {{
-                            localStorage.setItem('nogi_scroll_' + currentMember, chatBox.scrollTop);
-                        }}, 200);
-                    }});
-                }}
-
-                function renderSidebar(members) {{
-                    memberListEl.innerHTML = '';
-                    members.forEach(m => {{
-                        const div = document.createElement('div');
-                        div.className = 'member-item';
-                        div.draggable = true;
-                        div.dataset.name = m;
-                        let avatarHtml = `<div class="member-avatar-icon">${{m[0]}}</div>`;
-                        if (avatarMap[m]) {{
-                            avatarHtml = `<div class="member-avatar-icon clickable" onclick="event.stopPropagation(); openLightbox('${{avatarMap[m]}}')"><img src="${{avatarMap[m]}}"></div>`;
-                        }}
-                        div.innerHTML = `${{avatarHtml}}<div>${{m}}</div>`;
-                        div.onclick = () => loadMember(m);
-                        div.addEventListener('dragstart', handleDragStart);
-                        div.addEventListener('dragover', handleDragOver);
-                        div.addEventListener('drop', handleDrop);
-                        div.addEventListener('dragenter', handleDragEnter);
-                        div.addEventListener('dragleave', handleDragLeave);
-                        memberListEl.appendChild(div);
-                    }});
-                }}
-
-                let dragSrcEl = null;
-                function handleDragStart(e) {{ this.classList.add('dragging'); dragSrcEl = this; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/html', this.innerHTML); }}
-                function handleDragOver(e) {{ if (e.preventDefault) {{ e.preventDefault(); }} e.dataTransfer.dropEffect = 'move'; return false; }}
-                function handleDragEnter(e) {{ this.classList.add('over'); }}
-                function handleDragLeave(e) {{ this.classList.remove('over'); }}
-                function handleDrop(e) {{
-                    if (e.stopPropagation) {{ e.stopPropagation(); }}
-                    document.querySelectorAll('.member-item').forEach(col => {{ col.classList.remove('over'); col.classList.remove('dragging'); }});
-                    if (dragSrcEl !== this) {{
-                        const allItems = [...memberListEl.querySelectorAll('.member-item')];
-                        const srcIndex = allItems.indexOf(dragSrcEl);
-                        const targetIndex = allItems.indexOf(this);
-                        if (srcIndex < targetIndex) {{ this.after(dragSrcEl); }} else {{ this.before(dragSrcEl); }}
-                        saveSortOrder();
-                    }}
-                    return false;
-                }}
-                function saveSortOrder() {{
-                    const items = document.querySelectorAll('.member-item');
-                    const order = Array.from(items).map(item => item.dataset.name);
-                    localStorage.setItem('nogi_member_order', JSON.stringify(order));
-                    updateSortStatus(true);
-                }}
-                function resetSort() {{ localStorage.removeItem('nogi_member_order'); location.reload(); }}
-                function updateSortStatus(isCustom) {{
-                    if (isCustom) {{
-                        sortStatus.textContent = "排序：自訂"; sortStatus.style.color = "#7e1083"; sortStatus.style.fontWeight = "bold"; resetSortBtn.style.display = "inline-block";
-                    }} else {{
-                        sortStatus.textContent = "排序：50音 (預設)"; sortStatus.style.color = "#666"; sortStatus.style.fontWeight = "normal"; resetSortBtn.style.display = "none";
-                    }}
-                }}
-
-                function loadMember(name) {{
-                    chatBox.style.opacity = '0';
-                    currentMember = name;
-                    localStorage.setItem('nogi_last_member', name);
-                    document.querySelectorAll('.member-item').forEach(el => el.classList.remove('active'));
-                    const targetItem = document.querySelector(`.member-item[data-name="${{name}}"]`);
-                    if(targetItem) targetItem.classList.add('active');
-                    headerTitle.textContent = name;
-                    analyzeDates(name);
-                    setTimeout(() => {{ renderMessages(name); }}, 10);
-                }}
-
-                function analyzeDates(name) {{
-                    const msgs = allData[name];
-                    currentYears = {{}};
-                    msgs.forEach(msg => {{
-                        const y = msg.ts.substring(0, 4); const m = msg.ts.substring(4, 6);
-                        if (!currentYears[y]) currentYears[y] = new Set(); currentYears[y].add(m);
-                    }});
-                    const years = Object.keys(currentYears).sort().reverse();
-                    yearSelect.innerHTML = '<option value="">年</option>';
-                    years.forEach(y => {{ const opt = document.createElement('option'); opt.value = y; opt.textContent = y; yearSelect.appendChild(opt); }});
-                    yearSelect.disabled = false; monthSelect.innerHTML = '<option value="">月</option>'; monthSelect.disabled = true;
-                    yearSelect.onchange = () => updateMonthSelect(yearSelect.value);
-                    monthSelect.onchange = () => scrollToDate(yearSelect.value, monthSelect.value);
-                }}
-
-                function updateMonthSelect(year) {{
-                    monthSelect.innerHTML = '<option value="">月</option>';
-                    if (!year) {{ monthSelect.disabled = true; return; }}
-                    const months = Array.from(currentYears[year]).sort();
-                    months.forEach(m => {{ const opt = document.createElement('option'); opt.value = m; opt.textContent = m + "月"; monthSelect.appendChild(opt); }});
-                    monthSelect.disabled = false;
-                }}
-
-                function linkify(text) {{
-                    var urlRegex = /(https?:\\/\\/[^\\s]+)/g;
-                    return text.replace(urlRegex, function(url) {{ return '<a href="' + url + '" target="_blank">' + url + '</a>'; }});
-                }}
-
-                function renderMessages(name) {{
-                    chatBox.innerHTML = ''; const msgs = allData[name]; let lastDate = ''; let lastMonthKey = '';
-                    const fragment = document.createDocumentFragment();
-                    msgs.forEach(msg => {{
-                        const msgDiv = document.createElement('div'); const dateStr = msg.d; const monthKey = msg.ts.substring(0, 6);
-                        if (dateStr !== lastDate) {{
-                            const sep = document.createElement('div'); sep.className = 'timestamp-separator'; sep.textContent = dateStr;
-                            if (monthKey !== lastMonthKey) {{ sep.id = 'anchor-' + monthKey; lastMonthKey = monthKey; }}
-                            fragment.appendChild(sep); lastDate = dateStr;
-                        }}
-                        let contentHtml = ''; const safePath = name + '/' + msg.f;
-                        if (msg.t === '.txt') {{
-                            let textContent = msg.c.replace(/\\n/g, '<br>'); textContent = linkify(textContent); contentHtml = `<div class="bubble">${{textContent}}</div>`;
-                        }} else if (['.jpg', '.jpeg', '.png'].includes(msg.t)) {{
-                            contentHtml = `<div class="bubble media-bubble"><img src="${{safePath}}" class="chat-img" onclick="openLightbox(this.src)"></div>`;
-                        }} else if (msg.t === '.mp4') {{
-                            contentHtml = `<div class="video-container"><div class="video-wrapper"><div class="bubble media-bubble"><video src="${{safePath}}" controls class="chat-video" preload="metadata"></video></div></div><button class="video-expand-btn" title="全螢幕播放" onclick="openLightbox('${{safePath}}', 'video')">⛶</button></div>`;
-                        }} else if (['.m4a', '.mp3', '.wav'].includes(msg.t)) {{
-                            contentHtml = `<div class="bubble media-bubble"><audio src="${{safePath}}" controls class="chat-audio"></audio></div>`;
-                        }}
-                        msgDiv.className = 'msg-row';
-                        let avatarHtml = `<div class="avatar">${{name[0]}}</div>`;
-                        if (avatarMap[name]) {{ avatarHtml = `<div class="avatar clickable" onclick="openLightbox('${{avatarMap[name]}}')"><img src="${{avatarMap[name]}}"></div>`; }}
-                        msgDiv.innerHTML = `${{avatarHtml}}<div class="bubble-wrapper">${{contentHtml}}</div><div class="time-label">${{msg.hm}}</div>`;
-                        fragment.appendChild(msgDiv);
-                    }});
-                    chatBox.appendChild(fragment);
-                    waitForImagesAndScroll(name);
-                }}
-
-                function waitForImagesAndScroll(name) {{
-                    const imgs = chatBox.querySelectorAll('img'); let loadedCount = 0; const total = imgs.length;
-                    const reveal = () => {{
-                        const savedScroll = localStorage.getItem('nogi_scroll_' + name);
-                        if (savedScroll) {{ chatBox.scrollTop = parseInt(savedScroll); }} else {{ chatBox.scrollTop = chatBox.scrollHeight; }}
-                        chatBox.style.opacity = '1';
-                    }};
-                    if (total === 0) {{ reveal(); }} else {{
-                        const fallback = setTimeout(reveal, 1000); 
-                        imgs.forEach(img => {{
-                            if(img.complete) {{ loadedCount++; if(loadedCount === total) {{ clearTimeout(fallback); reveal(); }} }}
-                            else {{ img.onload = img.onerror = () => {{ loadedCount++; if(loadedCount === total) {{ clearTimeout(fallback); reveal(); }} }}; }}
-                        }});
-                    }}
-                }}
-                function scrollToDate(year, month) {{
-                    if (!year || !month) return;
-                    const id = 'anchor-' + year + month; const el = document.getElementById(id);
-                    if (el) {{ el.scrollIntoView({{ behavior: 'auto', block: 'start' }}); }}
-                }}
-                init();
-            </script>
-        </body>
-        </html>
-        """
+        # 這裡縮略 HTML 內容，保持跟 v24.0 一樣的 HTML 結構，只展示關鍵部分
+        html_content = self._get_html_template(json_data, json_avatars)
+        
         output_path = os.path.join(group_folder_path, "index.html")
         try:
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             return True, output_path
+        except Exception as e:
+            return False, str(e)
+
+    def update_html_avatars(self, group_folder_path, avatar_map):
+        """ v30: 只更新現有 index.html 中的 avatarMap """
+        html_path = os.path.join(group_folder_path, "index.html")
+        if not os.path.exists(html_path):
+            return False, "找不到 index.html，請先執行「產生入口網頁」。"
+
+        try:
+            with open(html_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # 將新的 avatar_map 轉為 JSON
+            new_json = json.dumps(avatar_map, ensure_ascii=False)
+            
+            # 使用 Regex 替換 const avatarMap = { ... };
+            # 注意：這裡假設 HTML 裡只有一個 const avatarMap = ...
+            pattern = r'const avatarMap = \{.*?\};'
+            replacement = f'const avatarMap = {new_json};'
+            
+            new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+            
+            if new_content == content:
+                return False, "無法在 index.html 中找到 avatarMap 設定，可能檔案已損壞或版本過舊。"
+
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+                
+            return True, html_path
         except Exception as e:
             return False, str(e)
 
@@ -522,7 +238,204 @@ class ChatGenerator:
         if len(ts) >= 8: return f"{ts[0:4]}/{ts[4:6]}/{ts[6:8]}"
         return ""
 
-# --- 主程式 (v29.0) ---
+    def _get_html_template(self, json_data, json_avatars):
+        # 為了縮減程式碼長度，這裡直接回傳 v24 的 HTML 字串
+        # 實務上建議把 HTML 放在單獨檔案讀取，但為了單一執行檔方便，這裡維持字串形式
+        return f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nogi MSG Viewer</title>
+<style>
+body {{ background-color: #f2f3f7; font-family: "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden; }}
+.sidebar {{ width: 220px; background-color: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; }}
+.sidebar-header {{ padding: 15px; background-color: #6a0d6e; color: white; font-weight: bold; text-align: center; }}
+.sidebar-sort-info {{ background-color: #f8f0fc; padding: 5px 10px; font-size: 12px; color: #666; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; }}
+.reset-btn {{ font-size: 10px; background: #ddd; border: none; padding: 2px 6px; cursor: pointer; border-radius: 4px; color: #333; display: none; }}
+.reset-btn:hover {{ background: #ccc; }}
+.member-list {{ overflow-y: auto; flex-grow: 1; }}
+.member-item {{ padding: 12px 20px; cursor: grab; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center; gap: 10px; transition: background 0.1s; user-select: none; }}
+.member-item:hover {{ background-color: #f9f9f9; }}
+.member-item.active {{ background-color: #f3e5f5; color: #7e1083; font-weight: bold; border-left: 4px solid #7e1083; }}
+.member-item.dragging {{ opacity: 0.5; background-color: #eee; }}
+.member-avatar-icon {{ width: 32px; height: 32px; background: #ddd; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 12px; color: #fff; overflow: hidden; flex-shrink: 0; }}
+.member-avatar-icon img {{ width: 100%; height: 100%; object-fit: cover; transition: transform 0.2s; }}
+.member-avatar-icon.clickable {{ cursor: zoom-in; }} 
+.member-avatar-icon.clickable:hover img {{ transform: scale(1.1); }}
+.main-area {{ flex-grow: 1; display: flex; flex-direction: column; height: 100%; position: relative; }}
+.header {{ background-color: #7e1083; color: white; height: 50px; display: flex; align-items: center; justify-content: center; padding: 0 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); flex-shrink: 0; position: relative; }}
+.header-center-group {{ display: flex; align-items: center; gap: 10px; }}
+.header-title {{ font-size: 18px; font-weight: bold; margin-right: 5px; }}
+select {{ padding: 3px 8px; border-radius: 12px; border: none; outline: none; background: rgba(255,255,255,0.9); color: #7e1083; font-weight: bold; cursor: pointer; font-size: 13px; }}
+#scaleSelect {{ background: rgba(255,255,255,0.7); color: #333; }}
+.chat-container {{ flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; opacity: 0; transition: opacity 0.15s ease-out; }}
+.empty-state {{ text-align: center; color: #999; margin-top: 100px; }}
+.timestamp-separator {{ text-align: center; color: #888; font-size: 12px; margin: 15px 0; background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 12px; align-self: center; }}
+.msg-row {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; }}
+.avatar {{ width: 40px; height: 40px; background-color: #ccc; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; flex-shrink: 0; overflow: hidden; }}
+.avatar img {{ width: 100%; height: 100%; object-fit: cover; transition: opacity 0.2s; }}
+.avatar.clickable {{ cursor: zoom-in; }}
+.avatar.clickable:hover {{ opacity: 0.8; }}
+.bubble-wrapper {{ display: flex; flex-direction: column; max-width: 80%; }}
+.bubble a {{ color: #0066cc; text-decoration: underline; word-break: break-all; }}
+.bubble {{ background-color: white; padding: 10px 14px; border-radius: 18px; border-top-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); word-wrap: break-word; line-height: 1.5; color: #333; font-size: 15px; white-space: pre-wrap; }}
+.media-bubble {{ background: transparent; box-shadow: none; padding: 0; border-radius: 12px; overflow: hidden; display: inline-block; }}
+:root {{ --img-scale: 25%; --video-scale: 65%; }}
+.chat-img {{ width: var(--img-scale); border-radius: 12px; display: block; cursor: zoom-in; border: 1px solid #eee; transition: width 0.3s; }}
+.chat-video {{ width: 100%; border-radius: 12px; max-height: 400px; display: block; margin: 0; }}
+.video-container {{ display: flex; align-items: center; gap: 8px; }}
+.video-wrapper {{ width: var(--video-scale); line-height: 0; }}
+.video-expand-btn {{ width: 30px; height: 30px; border-radius: 50%; border: none; background-color: #ddd; color: #555; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }}
+.video-expand-btn:hover {{ background-color: #bbb; color: #000; }}
+.chat-audio {{ width: 240px; }}
+.time-label {{ font-size: 11px; color: #999; margin-left: 4px; margin-top: 5px; min-width: 35px; }}
+.nav-buttons {{ position: fixed; bottom: 30px; right: 30px; display: flex; flex-direction: column; gap: 10px; z-index: 500; }}
+.nav-btn {{ width: 40px; height: 40px; border-radius: 50%; background: rgba(126, 16, 131, 0.8); color: white; border: none; font-size: 20px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; opacity: 0.7; transition: opacity 0.2s, transform 0.2s; }}
+.nav-btn:hover {{ opacity: 1; transform: scale(1.1); }}
+#lightbox {{ display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.9); align-items: center; justify-content: center; }}
+#lightbox-img {{ max-width: 90%; max-height: 90%; border-radius: 5px; box-shadow: 0 0 20px rgba(0,0,0,0.5); object-fit: contain; cursor: default; }}
+#lightbox-video {{ max-width: 90%; max-height: 90%; outline: none; }}
+@media (max-width: 768px) {{ .sidebar {{ display: none; }} .header-center-group {{ flex-wrap: wrap; justify-content: center; }} }}
+</style>
+</head>
+<body>
+<div id="lightbox" onclick="closeLightbox(event)">
+<img id="lightbox-img" src="" alt="Full size" style="display:none;" onclick="event.stopPropagation()">
+<video id="lightbox-video" controls style="display:none;" onclick="event.stopPropagation()"></video>
+</div>
+<div class="nav-buttons">
+<button class="nav-btn" title="回頂端" onclick="scrollToTop()">↑</button>
+<button class="nav-btn" title="去底部" onclick="scrollToBottom()">↓</button>
+</div>
+<div class="sidebar">
+<div class="sidebar-header">乃木坂46 MSG</div>
+<div class="sidebar-sort-info"><span id="sortStatus">排序：50音 (預設)</span><button id="resetSortBtn" class="reset-btn" onclick="resetSort()">重置</button></div>
+<div class="member-list" id="memberList"></div>
+</div>
+<div class="main-area">
+<div class="header">
+<div class="header-center-group">
+<div class="header-title" id="headerTitle">請選擇成員</div>
+<select id="yearSelect" disabled><option>年</option></select>
+<select id="monthSelect" disabled><option>月</option></select>
+<select id="scaleSelect"><option value="25%" selected>圖: 小</option><option value="50%">圖: 中</option><option value="75%">圖: 大</option><option value="100%">圖: 原</option></select>
+</div>
+</div>
+<div class="chat-container" id="chatBox"><div class="empty-state">請從左側選擇要瀏覽的成員</div></div>
+</div>
+<script>
+const allData = {json_data};
+const avatarMap = {json_avatars};
+let currentMember = null;
+let currentYears = {{}}; 
+let scrollTimeout = null;
+const memberListEl = document.getElementById('memberList');
+const chatBox = document.getElementById('chatBox');
+const headerTitle = document.getElementById('headerTitle');
+const yearSelect = document.getElementById('yearSelect');
+const monthSelect = document.getElementById('monthSelect');
+const scaleSelect = document.getElementById('scaleSelect');
+const sortStatus = document.getElementById('sortStatus');
+const resetSortBtn = document.getElementById('resetSortBtn');
+function openLightbox(src, type='img') {{ const lb = document.getElementById('lightbox'); const lbImg = document.getElementById('lightbox-img'); const lbVid = document.getElementById('lightbox-video'); lb.style.display = "flex"; if (type === 'video') {{ lbImg.style.display = "none"; lbVid.style.display = "block"; lbVid.src = src; lbVid.play(); }} else {{ lbVid.style.display = "none"; lbVid.pause(); lbImg.style.display = "block"; lbImg.src = src; }} }}
+function closeLightbox(e) {{ const lb = document.getElementById('lightbox'); const lbVid = document.getElementById('lightbox-video'); lbVid.pause(); lb.style.display = "none"; }}
+function scrollToTop() {{ chatBox.scrollTo({{ top: 0, behavior: 'smooth' }}); }}
+function scrollToBottom() {{ chatBox.scrollTo({{ top: chatBox.scrollHeight, behavior: 'smooth' }}); }}
+function init() {{
+let members = Object.keys(allData).sort();
+const savedOrder = localStorage.getItem('nogi_member_order');
+if (savedOrder) {{ try {{ const customOrder = JSON.parse(savedOrder); const validCustom = customOrder.filter(m => members.includes(m)); const missing = members.filter(m => !validCustom.includes(m)); members = [...validCustom, ...missing]; updateSortStatus(true); }} catch(e) {{}} }}
+renderSidebar(members);
+scaleSelect.onchange = function() {{ document.documentElement.style.setProperty('--img-scale', this.value); }};
+document.documentElement.style.setProperty('--img-scale', '25%');
+const lastMember = localStorage.getItem('nogi_last_member');
+if (lastMember && allData[lastMember]) {{ loadMember(lastMember); }}
+chatBox.addEventListener('scroll', function() {{ if (!currentMember || chatBox.style.opacity === '0') return; clearTimeout(scrollTimeout); scrollTimeout = setTimeout(() => {{ localStorage.setItem('nogi_scroll_' + currentMember, chatBox.scrollTop); }}, 200); }});
+}}
+function renderSidebar(members) {{
+memberListEl.innerHTML = '';
+members.forEach(m => {{
+const div = document.createElement('div'); div.className = 'member-item'; div.draggable = true; div.dataset.name = m;
+let avatarHtml = `<div class="member-avatar-icon">${{m[0]}}</div>`;
+if (avatarMap[m]) {{ avatarHtml = `<div class="member-avatar-icon clickable" onclick="event.stopPropagation(); openLightbox('${{avatarMap[m]}}')"><img src="${{avatarMap[m]}}"></div>`; }}
+div.innerHTML = `${{avatarHtml}}<div>${{m}}</div>`;
+div.onclick = () => loadMember(m);
+div.addEventListener('dragstart', handleDragStart); div.addEventListener('dragover', handleDragOver); div.addEventListener('drop', handleDrop); div.addEventListener('dragenter', handleDragEnter); div.addEventListener('dragleave', handleDragLeave);
+memberListEl.appendChild(div);
+}});
+}}
+let dragSrcEl = null;
+function handleDragStart(e) {{ this.classList.add('dragging'); dragSrcEl = this; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/html', this.innerHTML); }}
+function handleDragOver(e) {{ if (e.preventDefault) {{ e.preventDefault(); }} e.dataTransfer.dropEffect = 'move'; return false; }}
+function handleDragEnter(e) {{ this.classList.add('over'); }}
+function handleDragLeave(e) {{ this.classList.remove('over'); }}
+function handleDrop(e) {{
+if (e.stopPropagation) {{ e.stopPropagation(); }}
+document.querySelectorAll('.member-item').forEach(col => {{ col.classList.remove('over'); col.classList.remove('dragging'); }});
+if (dragSrcEl !== this) {{ const allItems = [...memberListEl.querySelectorAll('.member-item')]; const srcIndex = allItems.indexOf(dragSrcEl); const targetIndex = allItems.indexOf(this); if (srcIndex < targetIndex) {{ this.after(dragSrcEl); }} else {{ this.before(dragSrcEl); }} saveSortOrder(); }}
+return false;
+}}
+function saveSortOrder() {{ const items = document.querySelectorAll('.member-item'); const order = Array.from(items).map(item => item.dataset.name); localStorage.setItem('nogi_member_order', JSON.stringify(order)); updateSortStatus(true); }}
+function resetSort() {{ localStorage.removeItem('nogi_member_order'); location.reload(); }}
+function updateSortStatus(isCustom) {{ if (isCustom) {{ sortStatus.textContent = "排序：自訂"; sortStatus.style.color = "#7e1083"; sortStatus.style.fontWeight = "bold"; resetSortBtn.style.display = "inline-block"; }} else {{ sortStatus.textContent = "排序：50音 (預設)"; sortStatus.style.color = "#666"; sortStatus.style.fontWeight = "normal"; resetSortBtn.style.display = "none"; }} }}
+function loadMember(name) {{
+chatBox.style.opacity = '0'; currentMember = name; localStorage.setItem('nogi_last_member', name);
+document.querySelectorAll('.member-item').forEach(el => el.classList.remove('active'));
+const targetItem = document.querySelector(`.member-item[data-name="${{name}}"]`);
+if(targetItem) targetItem.classList.add('active');
+headerTitle.textContent = name; analyzeDates(name);
+setTimeout(() => {{ renderMessages(name); }}, 10);
+}}
+function analyzeDates(name) {{
+const msgs = allData[name]; currentYears = {{}};
+msgs.forEach(msg => {{ const y = msg.ts.substring(0, 4); const m = msg.ts.substring(4, 6); if (!currentYears[y]) currentYears[y] = new Set(); currentYears[y].add(m); }});
+const years = Object.keys(currentYears).sort().reverse();
+yearSelect.innerHTML = '<option value="">年</option>';
+years.forEach(y => {{ const opt = document.createElement('option'); opt.value = y; opt.textContent = y; yearSelect.appendChild(opt); }});
+yearSelect.disabled = false; monthSelect.innerHTML = '<option value="">月</option>'; monthSelect.disabled = true;
+yearSelect.onchange = () => updateMonthSelect(yearSelect.value);
+monthSelect.onchange = () => scrollToDate(yearSelect.value, monthSelect.value);
+}}
+function updateMonthSelect(year) {{
+monthSelect.innerHTML = '<option value="">月</option>'; if (!year) {{ monthSelect.disabled = true; return; }}
+const months = Array.from(currentYears[year]).sort();
+months.forEach(m => {{ const opt = document.createElement('option'); opt.value = m; opt.textContent = m + "月"; monthSelect.appendChild(opt); }});
+monthSelect.disabled = false;
+}}
+function linkify(text) {{ var urlRegex = /(https?:\\/\\/[^\\s]+)/g; return text.replace(urlRegex, function(url) {{ return '<a href="' + url + '" target="_blank">' + url + '</a>'; }}); }}
+function renderMessages(name) {{
+chatBox.innerHTML = ''; const msgs = allData[name]; let lastDate = ''; let lastMonthKey = '';
+const fragment = document.createDocumentFragment();
+msgs.forEach(msg => {{
+const msgDiv = document.createElement('div'); const dateStr = msg.d; const monthKey = msg.ts.substring(0, 6);
+if (dateStr !== lastDate) {{ const sep = document.createElement('div'); sep.className = 'timestamp-separator'; sep.textContent = dateStr; if (monthKey !== lastMonthKey) {{ sep.id = 'anchor-' + monthKey; lastMonthKey = monthKey; }} fragment.appendChild(sep); lastDate = dateStr; }}
+let contentHtml = ''; const safePath = name + '/' + msg.f;
+if (msg.t === '.txt') {{ let textContent = msg.c.replace(/\\n/g, '<br>'); textContent = linkify(textContent); contentHtml = `<div class="bubble">${{textContent}}</div>`; }}
+else if (['.jpg', '.jpeg', '.png'].includes(msg.t)) {{ contentHtml = `<div class="bubble media-bubble"><img src="${{safePath}}" class="chat-img" onclick="openLightbox(this.src)"></div>`; }}
+else if (msg.t === '.mp4') {{ contentHtml = `<div class="video-container"><div class="video-wrapper"><div class="bubble media-bubble"><video src="${{safePath}}" controls class="chat-video" preload="metadata"></video></div></div><button class="video-expand-btn" title="全螢幕播放" onclick="openLightbox('${{safePath}}', 'video')">⛶</button></div>`; }}
+else if (['.m4a', '.mp3', '.wav'].includes(msg.t)) {{ contentHtml = `<div class="bubble media-bubble"><audio src="${{safePath}}" controls class="chat-audio"></audio></div>`; }}
+msgDiv.className = 'msg-row';
+let avatarHtml = `<div class="avatar">${{name[0]}}</div>`;
+if (avatarMap[name]) {{ avatarHtml = `<div class="avatar clickable" onclick="openLightbox('${{avatarMap[name]}}')"><img src="${{avatarMap[name]}}"></div>`; }}
+msgDiv.innerHTML = `${{avatarHtml}}<div class="bubble-wrapper">${{contentHtml}}</div><div class="time-label">${{msg.hm}}</div>`;
+fragment.appendChild(msgDiv);
+}});
+chatBox.appendChild(fragment);
+waitForImagesAndScroll(name);
+}}
+function waitForImagesAndScroll(name) {{
+const imgs = chatBox.querySelectorAll('img'); let loadedCount = 0; const total = imgs.length;
+const reveal = () => {{ const savedScroll = localStorage.getItem('nogi_scroll_' + name); if (savedScroll) {{ chatBox.scrollTop = parseInt(savedScroll); }} else {{ chatBox.scrollTop = chatBox.scrollHeight; }} chatBox.style.opacity = '1'; }};
+if (total === 0) {{ reveal(); }} else {{ const fallback = setTimeout(reveal, 1000); imgs.forEach(img => {{ if(img.complete) {{ loadedCount++; if(loadedCount === total) {{ clearTimeout(fallback); reveal(); }} }} else {{ img.onload = img.onerror = () => {{ loadedCount++; if(loadedCount === total) {{ clearTimeout(fallback); reveal(); }} }}; }} }}); }}
+}}
+function scrollToDate(year, month) {{ if (!year || !month) return; const id = 'anchor-' + year + month; const el = document.getElementById(id); if (el) {{ el.scrollIntoView({{ behavior: 'auto', block: 'start' }}); }} }}
+init();
+</script>
+</body>
+</html>"""
+
+# --- 主程式 (v30.0: 新增更新頭像按鈕) ---
 class NogiBackupApp:
     def __init__(self, root):
         self.root = root
@@ -584,7 +497,11 @@ class NogiBackupApp:
         self.chk_avatar.pack(side="left", padx=(0, 15))
 
         self.btn_html = ttk.Button(action_frame, text="產生入口網頁", command=self.generate_html_action)
-        self.btn_html.pack(side="left", fill="x", expand=True)
+        self.btn_html.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        # 新增按鈕：僅更新頭像
+        self.btn_update_avatar = ttk.Button(action_frame, text="僅更新現有頭像", command=self.update_avatar_action)
+        self.btn_update_avatar.pack(side="left", fill="x", expand=True)
 
         # 5. GitHub 連結
         link_frame_mid = ttk.Frame(root, padding=(0, 5))
@@ -597,7 +514,6 @@ class NogiBackupApp:
         self.log_area = scrolledtext.ScrolledText(root, height=12, state='disabled', font=("Consolas", 9))
         self.log_area.pack(fill="both", expand=True, padx=10, pady=5)
         
-        # 靜態插入歡迎訊息，不使用任何判斷式
         self.log_area.config(state='normal')
         self.log_area.insert(tk.END, "歡迎使用 NogkSaver！\n\n【已知問題】\n感謝訂閱訊息：因為 API 資料特性，訂閱時的第一則「感謝訂閱」訊息可能不會顯示在第一則。\n----------------------------------------")
         self.log_area.config(state='disabled')
@@ -615,7 +531,6 @@ class NogiBackupApp:
 
     def log(self, msg):
         self.log_area.config(state='normal')
-        # 確保有換行符
         self.log_area.insert(tk.END, "\n" + str(msg))
         self.log_area.see(tk.END)
         self.log_area.config(state='disabled')
@@ -693,6 +608,7 @@ class NogiBackupApp:
         self.btn_start.config(state="normal")
 
     def generate_html_action(self):
+        # 產生全新網頁的入口 (掃描資料夾 -> 生成 HTML)
         nickname = self.nickname_var.get().strip()
         use_avatar = self.use_avatar_var.get()
         
@@ -703,12 +619,32 @@ class NogiBackupApp:
         target_dir = filedialog.askdirectory(initialdir=initial_dir, title="請選擇 nogizaka 資料夾")
         
         if target_dir:
+            # 準備進行生成
             if use_avatar:
-                self.open_avatar_dialog(target_dir, nickname)
+                # 傳入 callback: run_generation (產生新檔案)
+                self.open_avatar_dialog(target_dir, nickname, action="generate")
             else:
                 self.run_generation(target_dir, nickname, {})
 
-    def open_avatar_dialog(self, target_dir, nickname):
+    def update_avatar_action(self):
+        # 僅更新頭像的入口 (讀取 HTML -> 替換 JSON)
+        nickname = self.nickname_var.get().strip() # 這裡的 nickname 其實用不到，因為只改 avatarMap
+        
+        initial_dir = os.path.join(self.path_var.get(), "nogizaka")
+        if not os.path.exists(initial_dir):
+            initial_dir = self.path_var.get()
+
+        target_dir = filedialog.askdirectory(initialdir=initial_dir, title="請選擇 nogizaka 資料夾 (含有 index.html)")
+        
+        if target_dir:
+            if not os.path.exists(os.path.join(target_dir, "index.html")):
+                messagebox.showerror("錯誤", "該資料夾中找不到 index.html，請先使用「產生入口網頁」。")
+                return
+            
+            # 傳入 callback: run_update_only (只替換字串)
+            self.open_avatar_dialog(target_dir, nickname, action="update")
+
+    def open_avatar_dialog(self, target_dir, nickname, action):
         members = []
         try:
             for entry in os.listdir(target_dir):
@@ -725,9 +661,16 @@ class NogiBackupApp:
             messagebox.showwarning("提示", "找不到成員資料夾，無法設定頭像。")
             return
 
-        dialog = AvatarSelectionWindow(self.root, members, target_dir)
-        self.root.wait_window(dialog)
-        self.run_generation(target_dir, nickname, dialog.avatar_map)
+        # 根據 action 決定 callback
+        if action == "generate":
+            callback_func = lambda amap: self.run_generation(target_dir, nickname, amap)
+        else: # update
+            callback_func = lambda amap: self.run_update_only(target_dir, amap)
+
+        dialog = AvatarSelectionWindow(self.root, members, target_dir, callback_func)
+        # 這裡不使用 wait_window，因為 callback 會在視窗內觸發，避免邏輯卡住
+        # 但如果要在這裡是阻塞式的，可以用 wait_window。
+        # 為了簡化，AvatarSelectionWindow 在 finish 時會呼叫 callback。
 
     def run_generation(self, target_dir, nickname, avatar_map):
         gen = ChatGenerator()
@@ -745,6 +688,17 @@ class NogiBackupApp:
             messagebox.showinfo("成功", popup_msg)
         else:
             self.log(f"產生失敗: {result}")
+            messagebox.showerror("失敗", result)
+
+    def run_update_only(self, target_dir, avatar_map):
+        gen = ChatGenerator()
+        success, result = gen.update_html_avatars(target_dir, avatar_map)
+        
+        if success:
+            self.log(f"=== 頭像更新完畢 ===\n已更新檔案: {result}")
+            messagebox.showinfo("成功", "頭像設定已更新至 index.html\n請重新整理網頁查看效果。")
+        else:
+            self.log(f"更新失敗: {result}")
             messagebox.showerror("失敗", result)
 
 if __name__ == "__main__":
